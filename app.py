@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -32,11 +31,41 @@ st.subheader("Lagos de Pucón y Villarrica - Región de la Araucanía")
 def load_and_preprocess_data():
     """Carga y preprocesa los datos del CSV"""
     try:
-        # Cargar datos
-        df = pd.read_csv('/Users/ignaciozambrano/Library/CloudStorage/OneDrive-Personal/python/analisis-calidad-agua/Consolidado Entrenamiento - Tabla Completa (1).csv')
+        # Lista de posibles nombres de archivo CSV
+        possible_files = [
+            'Consolidado Entrenamiento - Tabla Completa (1).csv',
+            'Consolidado Entrenamiento  Tabla Completa 1.csv',
+            'data.csv',
+            'dataset.csv'
+        ]
+        
+        df = None
+        used_file = None
+        
+        # Intentar cargar cada archivo posible
+        for filename in possible_files:
+            try:
+                df = pd.read_csv(filename)
+                used_file = filename
+                st.success(f"✅ Datos cargados desde: {filename}")
+                break
+            except FileNotFoundError:
+                continue
+            except Exception as e:
+                st.warning(f"⚠️ Error con {filename}: {e}")
+                continue
+        
+        if df is None:
+            st.error("❌ No se encontró ningún archivo CSV válido. Archivos esperados:")
+            for f in possible_files:
+                st.write(f"   - {f}")
+            return None
         
         # Limpiar nombres de columnas
         df.columns = df.columns.str.strip()
+        
+        # Mostrar información del archivo cargado
+        st.info(f"📊 Archivo cargado: {used_file} ({len(df)} filas, {len(df.columns)} columnas)")
         
         # Identificar columnas que pueden tener valores numéricos con comas
         # Convertir TODAS las columnas excepto las claramente categóricas
@@ -505,7 +534,12 @@ if df is not None:
                             st.info("ℹ️ Condiciones del agua aparentemente normales")
 
 else:
-    st.error("No se pudo cargar el archivo CSV. Asegúrate de que el archivo 'Consolidado Entrenamiento  Tabla Completa 1.csv' esté disponible.")
+    st.error("❌ No se pudo cargar el archivo CSV.")
+    st.info("📁 Archivos CSV esperados en el directorio raíz:")
+    st.write("   - Consolidado Entrenamiento - Tabla Completa (1).csv")
+    st.write("   - Consolidado Entrenamiento  Tabla Completa 1.csv")
+    st.write("   - data.csv")
+    st.write("   - dataset.csv")
 
 # Footer
 st.markdown("---")
