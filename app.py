@@ -34,7 +34,8 @@ def load_and_preprocess_data():
     try:
         # Lista de posibles nombres de archivo CSV
         possible_files = [
-            'Consolidado Entrenamiento  Tabla Fechas.csv',
+            'Consolidado Entrenamiento  Tabla Fechas.csv'
+            'Consolidado Entrenamiento - Tabla Completa (1).csv',
         ]
         
         df = None
@@ -42,7 +43,7 @@ def load_and_preprocess_data():
         
         # Intentar cargar cada archivo posible
         for filename in possible_files:
-            try:
+            try: 
                 df = pd.read_csv(filename)
                 used_file = filename
                 st.success(f"✅ Datos cargados desde: {filename}")
