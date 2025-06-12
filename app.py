@@ -11,12 +11,13 @@ from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.metrics import mean_squared_error, r2_score, accuracy_score, classification_report
 from sklearn.preprocessing import LabelEncoder, StandardScaler
+from datetime import datetime, timedelta
 import warnings
 warnings.filterwarnings('ignore')
 
 # Configuración de la página
 st.set_page_config(
-    page_title="Análisis de Calidad del Agua - Lagos Pucón y Villarrica",
+    page_title="Análisis de Calidad del Agua - Lago Villarrica",
     page_icon="🌊",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -24,19 +25,16 @@ st.set_page_config(
 
 # Título principal
 st.title("🌊 Sistema de Análisis de Calidad del Agua")
-st.subheader("Lagos de Pucón y Villarrica - Región de la Araucanía")
+st.subheader("Lago Villarrica - Región de la Araucanía")
 
-# Función para cargar y preprocesar datos CORREGIDA
+# Función para cargar y preprocesar datos MEJORADA
 @st.cache_data
 def load_and_preprocess_data():
     """Carga y preprocesa los datos del CSV"""
     try:
         # Lista de posibles nombres de archivo CSV
         possible_files = [
-            'Consolidado Entrenamiento - Tabla Completa (1).csv',
-            'Consolidado Entrenamiento  Tabla Completa 1.csv',
-            'data.csv',
-            'dataset.csv'
+            'Consolidado Entrenamiento  Tabla Fechas.csv',
         ]
         
         df = None
@@ -69,12 +67,24 @@ def load_and_preprocess_data():
         
         # Identificar columnas que pueden tener valores numéricos con comas
         # Convertir TODAS las columnas excepto las claramente categóricas
-        categorical_cols = ['Folio', 'Lugar Muestreo', 'Comuna']
+        categorical_cols = ['Día', 'Folio', 'Lugar Muestreo', 'Comuna']
         
         for col in df.columns:
             if col not in categorical_cols:
                 # Intentar convertir a numérico, reemplazando comas por puntos
                 df[col] = pd.to_numeric(df[col].astype(str).str.replace(',', '.'), errors='coerce')
+        
+        # Procesar fechas si existe la columna Día
+        if 'Día' in df.columns:
+            try:
+                df['Fecha'] = pd.to_datetime(df['Día'], errors='coerce')
+                df['Día_Semana'] = df['Fecha'].dt.day_name()
+                df['Mes'] = df['Fecha'].dt.month_name()
+                df['Día_Mes'] = df['Fecha'].dt.day
+                df['Semana'] = df['Fecha'].dt.isocalendar().week
+                st.success("✅ Fechas procesadas correctamente")
+            except Exception as e:
+                st.warning(f"⚠️ Error procesando fechas: {e}")
         
         # Limpiar nombres de lugares y comunas
         df['Lugar Muestreo'] = df['Lugar Muestreo'].str.strip().str.title()
@@ -98,6 +108,109 @@ def load_and_preprocess_data():
         st.error(f"Error cargando datos: {e}")
         return None
 
+# Función para generar insights avanzados
+def generate_advanced_insights(df, target_var):
+    """Genera insights avanzados basados en rangos y correlaciones"""
+    insights = []
+    
+    # Obtener variables numéricas
+    numeric_vars = df.select_dtypes(include=[np.number]).columns.tolist()
+    numeric_vars = [col for col in numeric_vars if col != target_var and col in df.columns]
+    
+    if target_var not in df.columns:
+        return insights
+    
+    for var in numeric_vars[:8]:  # Limitar a 8 variables para evitar sobrecarga
+        try:
+            # Calcular correlación
+            correlation = df[var].corr(df[target_var])
+            
+            if abs(correlation) > 0.1:  # Solo mostrar correlaciones significativas
+                # Dividir en rangos (cuartiles)
+                quartiles = df[var].quantile([0.25, 0.5, 0.75]).values
+                
+                # Analizar cada rango
+                for i, (q_low, q_high) in enumerate(zip([df[var].min()] + quartiles.tolist(), 
+                                                       quartiles.tolist() + [df[var].max()])):
+                    
+                    mask = (df[var] >= q_low) & (df[var] <= q_high)
+                    if mask.sum() > 5:  # Al menos 5 observaciones
+                        target_values = df[mask][target_var]
+                        
+                        if target_var == 'Algas':
+                            # Para algas (categórica), calcular probabilidad
+                            prob = (target_values > 0).mean() * 100
+                            if prob > 0:
+                                range_name = f"{q_low:.2f} - {q_high:.2f}"
+                                insights.append({
+                                    'tipo': 'rango_algas',
+                                    'variable': var,
+                                    'rango': range_name,
+                                    'probabilidad': prob,
+                                    'n_muestras': mask.sum(),
+                                    'descripcion': f"Cuando {var} está entre {range_name}, hay {prob:.1f}% probabilidad de presencia de algas ({mask.sum()} muestras)"
+                                })
+                        
+                        elif target_var == 'Fósforo reactivo total (mg/L)':
+                            # Para fósforo (numérica), calcular promedio y rango
+                            avg_val = target_values.mean()
+                            std_val = target_values.std()
+                            if not np.isnan(avg_val) and avg_val > 0:
+                                range_name = f"{q_low:.2f} - {q_high:.2f}"
+                                insights.append({
+                                    'tipo': 'rango_fosforo',
+                                    'variable': var,
+                                    'rango': range_name,
+                                    'promedio': avg_val,
+                                    'desviacion': std_val,
+                                    'n_muestras': mask.sum(),
+                                    'descripcion': f"Cuando {var} está entre {range_name}, fósforo promedio: {avg_val:.4f} mg/L ± {std_val:.4f} ({mask.sum()} muestras)"
+                                })
+        
+        except Exception as e:
+            continue
+    
+    return insights
+
+# Función para detectar factores de riesgo
+def detect_risk_factors(df):
+    """Detecta factores de riesgo automáticamente"""
+    risk_factors = []
+    
+    # Definir umbrales de riesgo
+    risk_conditions = [
+        ('Fósforo reactivo total (mg/L)', '>', 0.02, 'Alto fósforo'),
+        ('pH', '>', 8.5, 'pH muy alcalino'),
+        ('pH', '<', 6.5, 'pH muy ácido'),
+        ('Temp Agua (°C)', '>', 25, 'Temperatura alta del agua'),
+        ('Turb (FNU)', '>', 2, 'Alta turbidez'),
+        ('Algas', '>', 1, 'Presencia significativa de algas')
+    ]
+    
+    for var, operator, threshold, description in risk_conditions:
+        if var in df.columns:
+            try:
+                if operator == '>':
+                    risk_mask = df[var] > threshold
+                else:
+                    risk_mask = df[var] < threshold
+                
+                risk_percentage = (risk_mask.sum() / len(df)) * 100
+                
+                if risk_percentage > 5:  # Solo mostrar si afecta más del 5%
+                    risk_factors.append({
+                        'factor': description,
+                        'variable': var,
+                        'threshold': threshold,
+                        'percentage': risk_percentage,
+                        'count': risk_mask.sum(),
+                        'operator': operator
+                    })
+            except:
+                continue
+    
+    return sorted(risk_factors, key=lambda x: x['percentage'], reverse=True)
+
 # Cargar datos
 df = load_and_preprocess_data()
 
@@ -106,20 +219,35 @@ if df is not None:
     st.sidebar.title("🔧 Panel de Control")
     seccion = st.sidebar.selectbox(
         "Selecciona una sección:",
-        ["📊 Exploración de Datos", "📈 Visualizaciones Dinámicas", "🤖 Modelos Predictivos"]
+        ["📊 Exploración de Datos", "📈 Análisis Temporal", "🔍 Insights Avanzados", "🤖 Modelos Predictivos"]
     )
     
     # SECCIÓN 1: EXPLORACIÓN DE DATOS
     if seccion == "📊 Exploración de Datos":
         st.header("📊 Exploración de Datos")
         
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
             st.metric("Total de Muestras", len(df))
         with col2:
             st.metric("Playas Monitoreadas", df['Lugar Muestreo'].nunique())
         with col3:
             st.metric("Comunas", df['Comuna'].nunique())
+        with col4:
+            if 'Fecha' in df.columns:
+                date_range = (df['Fecha'].max() - df['Fecha'].min()).days
+                st.metric("Días de Monitoreo", date_range)
+        
+        # Mostrar información temporal si existe
+        if 'Fecha' in df.columns:
+            st.subheader("📅 Información Temporal")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write(f"**Fecha inicial:** {df['Fecha'].min().strftime('%d/%m/%Y')}")
+                st.write(f"**Fecha final:** {df['Fecha'].max().strftime('%d/%m/%Y')}")
+            with col2:
+                st.write(f"**Muestras por día:** {len(df) / date_range:.1f}")
+                st.write(f"**Días con muestras:** {df['Fecha'].nunique()}")
         
         # Mostrar datos
         st.subheader("📋 Datos Cargados")
@@ -130,145 +258,299 @@ if df is not None:
         numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
         st.dataframe(df[numeric_cols].describe())
     
-    # SECCIÓN 2: VISUALIZACIONES DINÁMICAS
-    elif seccion == "📈 Visualizaciones Dinámicas":
-        st.header("📈 Visualizaciones Dinámicas")
+    # SECCIÓN 2: ANÁLISIS TEMPORAL
+    elif seccion == "📈 Análisis Temporal":
+        st.header("📈 Análisis Temporal")
         
-        # Clasificar variables
-        variables_fisicas = ['Temp. Amb (°C)', 'Temp Agua (°C)', 'Presión (PSI)']
-        variables_quimicas = ['pH', 'ORP (mV)', 'O2 Sat (%)', 'O2 (ppm)', 'Cond (µS/cm)', 
-                             'Cond Abs (µS/cm)', 'TDS (ppm)', 'Turb (FNU)', 'Fósforo reactivo total (mg/L)']
-        variables_observacionales = ['Viento', 'Oleaje', 'Musgo', 'Algas', 'Cielo']
-        variables_categoricas = ['Comuna', 'Lugar Muestreo', 'Viento_Label', 'Oleaje_Label', 
-                               'Musgo_Label', 'Algas_Label', 'Cielo_Label']
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.subheader("🎯 Selección de Variables")
-            tipo_variable = st.selectbox(
-                "Tipo de Variable:",
-                ["Variables Físicas", "Variables Químicas", "Variables Observacionales", "Variables Categóricas"]
-            )
+        if 'Fecha' not in df.columns:
+            st.error("❌ No se encontró información de fechas en los datos")
+        else:
+            # Obtener todas las variables disponibles
+            all_vars = df.columns.tolist()
+            numeric_vars = df.select_dtypes(include=[np.number]).columns.tolist()
+            categorical_vars = df.select_dtypes(include=['object']).columns.tolist()
             
-            if tipo_variable == "Variables Físicas":
-                variables_disponibles = variables_fisicas
-            elif tipo_variable == "Variables Químicas":
-                variables_disponibles = variables_quimicas
-            elif tipo_variable == "Variables Observacionales":
-                variables_disponibles = variables_observacionales
-            else:
-                variables_disponibles = variables_categoricas
+            st.subheader("🎯 Configuración de Análisis Temporal")
             
-            variable_x = st.selectbox("Variable X:", variables_disponibles)
-            variable_y = st.selectbox("Variable Y:", variables_disponibles, index=1 if len(variables_disponibles) > 1 else 0)
-        
-        with col2:
-            st.subheader("📊 Tipo de Gráfico")
-            tipo_grafico = st.selectbox(
-                "Selecciona el tipo de gráfico:",
-                [
-                    "Scatter Plot (Dispersión)",
-                    "Box Plot (Cajas)",
-                    "Histogram (Histograma)",
-                    "Bar Plot (Barras)",
-                    "Line Plot (Líneas)",
-                    "Violin Plot",
-                    "Heatmap (Correlación)",
-                    "Pair Plot (Matriz de dispersión)"
-                ]
-            )
+            col1, col2 = st.columns(2)
             
-            color_var = st.selectbox("Colorear por:", ["Ninguno"] + variables_categoricas)
-        
-        # Generar gráficos
-        st.subheader(f"📊 {tipo_grafico}")
-        
-        try:
-            if tipo_grafico == "Scatter Plot (Dispersión)":
-                fig = px.scatter(df, x=variable_x, y=variable_y, 
-                               color=color_var if color_var != "Ninguno" else None,
-                               title=f"Scatter Plot: {variable_x} vs {variable_y}",
-                               template="plotly_white")
-                st.plotly_chart(fig, use_container_width=True)
-            
-            elif tipo_grafico == "Box Plot (Cajas)":
-                fig = px.box(df, x=variable_x, y=variable_y,
-                           color=color_var if color_var != "Ninguno" else None,
-                           title=f"Box Plot: {variable_y} por {variable_x}",
-                           template="plotly_white")
-                st.plotly_chart(fig, use_container_width=True)
-            
-            elif tipo_grafico == "Histogram (Histograma)":
-                fig = px.histogram(df, x=variable_x,
-                                 color=color_var if color_var != "Ninguno" else None,
-                                 title=f"Histograma: {variable_x}",
-                                 template="plotly_white")
-                st.plotly_chart(fig, use_container_width=True)
-            
-            elif tipo_grafico == "Bar Plot (Barras)":
-                if variable_x in variables_categoricas:
-                    df_count = df[variable_x].value_counts().reset_index()
-                    df_count.columns = [variable_x, 'Frecuencia']
-                    fig = px.bar(df_count, x=variable_x, y='Frecuencia',
-                               title=f"Frecuencia por {variable_x}",
-                               template="plotly_white")
-                    st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.warning("Para gráfico de barras, selecciona una variable categórica en X")
-            
-            elif tipo_grafico == "Line Plot (Líneas)":
-                if 'Folio' in df.columns:
-                    df_sorted = df.sort_values('Folio')
-                    fig = px.line(df_sorted, x=df_sorted.index, y=variable_y,
-                                title=f"Evolución temporal: {variable_y}",
-                                template="plotly_white")
-                    st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.warning("No hay variable temporal disponible")
-            
-            elif tipo_grafico == "Violin Plot":
-                fig = px.violin(df, x=variable_x, y=variable_y,
-                              color=color_var if color_var != "Ninguno" else None,
-                              title=f"Violin Plot: {variable_y} por {variable_x}",
-                              template="plotly_white")
-                st.plotly_chart(fig, use_container_width=True)
-            
-            elif tipo_grafico == "Heatmap (Correlación)":
-                numeric_df = df[variables_fisicas + variables_quimicas + variables_observacionales].corr()
-                fig = px.imshow(numeric_df, text_auto=True, aspect="auto",
-                              title="Matriz de Correlación",
-                              template="plotly_white")
-                st.plotly_chart(fig, use_container_width=True)
-            
-            elif tipo_grafico == "Pair Plot (Matriz de dispersión)":
-                selected_vars = st.multiselect(
-                    "Selecciona variables para el pair plot:",
-                    variables_fisicas + variables_quimicas,
-                    default=variables_fisicas[:3]
+            with col1:
+                st.write("**Selección de Variables**")
+                variable_y = st.selectbox("Variable a analizar:", numeric_vars)
+                
+                # Opción de agrupación temporal
+                time_grouping = st.selectbox(
+                    "Agrupación temporal:",
+                    ["Diario", "Semanal", "Por Lugar", "Por Comuna"]
                 )
-                if len(selected_vars) >= 2:
-                    fig = px.scatter_matrix(df[selected_vars],
-                                          title="Matriz de Dispersión",
-                                          template="plotly_white")
+                
+                # Filtros adicionales
+                filter_by = st.selectbox("Filtrar por:", ["Ninguno"] + categorical_vars)
+                
+            with col2:
+                st.write("**Opciones de Visualización**")
+                chart_type = st.selectbox(
+                    "Tipo de gráfico:",
+                    ["Línea Temporal", "Dispersión Temporal", "Box Plot Temporal", 
+                     "Heatmap Temporal", "Tendencia con Regresión"]
+                )
+                
+                # Variables adicionales
+                color_by = st.selectbox("Colorear por:", ["Ninguno"] + categorical_vars)
+                size_by = st.selectbox("Tamaño por:", ["Ninguno"] + numeric_vars)
+            
+            # Aplicar filtros si se seleccionaron
+            filtered_df = df.copy()
+            if filter_by != "Ninguno":
+                filter_values = st.multiselect(
+                    f"Valores de {filter_by}:",
+                    filtered_df[filter_by].unique(),
+                    default=filtered_df[filter_by].unique()
+                )
+                filtered_df = filtered_df[filtered_df[filter_by].isin(filter_values)]
+            
+            # Generar gráfico temporal
+            st.subheader(f"📊 {chart_type}: {variable_y}")
+            
+            try:
+                if chart_type == "Línea Temporal":
+                    if time_grouping == "Diario":
+                        daily_data = filtered_df.groupby('Fecha')[variable_y].mean().reset_index()
+                        fig = px.line(daily_data, x='Fecha', y=variable_y,
+                                    title=f"Evolución Diaria de {variable_y}",
+                                    template="plotly_white")
+                    else:
+                        fig = px.line(filtered_df, x='Fecha', y=variable_y,
+                                    color=color_by if color_by != "Ninguno" else None,
+                                    title=f"Evolución Temporal de {variable_y}",
+                                    template="plotly_white")
+                    
+                elif chart_type == "Dispersión Temporal":
+                    fig = px.scatter(filtered_df, x='Fecha', y=variable_y,
+                                   color=color_by if color_by != "Ninguno" else None,
+                                   size=size_by if size_by != "Ninguno" else None,
+                                   title=f"Dispersión Temporal de {variable_y}",
+                                   template="plotly_white")
+                
+                elif chart_type == "Box Plot Temporal":
+                    if 'Mes' in filtered_df.columns:
+                        fig = px.box(filtered_df, x='Mes', y=variable_y,
+                                   color=color_by if color_by != "Ninguno" else None,
+                                   title=f"Distribución Mensual de {variable_y}",
+                                   template="plotly_white")
+                    else:
+                        fig = px.box(filtered_df, x='Día_Semana', y=variable_y,
+                                   title=f"Distribución por Día de la Semana de {variable_y}",
+                                   template="plotly_white")
+                
+                elif chart_type == "Heatmap Temporal":
+                    if 'Día_Mes' in filtered_df.columns and 'Mes' in filtered_df.columns:
+                        pivot_data = filtered_df.pivot_table(
+                            values=variable_y, 
+                            index='Día_Mes', 
+                            columns='Mes', 
+                            aggfunc='mean'
+                        )
+                        fig = px.imshow(pivot_data, 
+                                      title=f"Heatmap Temporal de {variable_y}",
+                                      template="plotly_white",
+                                      aspect="auto")
+                    else:
+                        st.warning("No se puede generar heatmap temporal sin información de día y mes")
+                        fig = None
+                
+                elif chart_type == "Tendencia con Regresión":
+                    fig = px.scatter(filtered_df, x='Fecha', y=variable_y,
+                                   color=color_by if color_by != "Ninguno" else None,
+                                   trendline="ols",
+                                   title=f"Tendencia de {variable_y} con Regresión",
+                                   template="plotly_white")
+                
+                if fig:
                     st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.warning("Selecciona al menos 2 variables")
-        
-        except Exception as e:
-            st.error(f"Error generando gráfico: {e}")
+                    
+                    # Mostrar estadísticas temporales
+                    st.subheader("📊 Estadísticas Temporales")
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        trend_slope = np.polyfit(range(len(filtered_df)), filtered_df[variable_y].dropna(), 1)[0]
+                        trend_direction = "📈 Creciente" if trend_slope > 0 else "📉 Decreciente"
+                        st.metric("Tendencia General", trend_direction)
+                    
+                    with col2:
+                        volatility = filtered_df[variable_y].std()
+                        st.metric("Volatilidad (Desv. Est.)", f"{volatility:.4f}")
+                    
+                    with col3:
+                        if len(filtered_df) > 1:
+                            last_value = filtered_df[variable_y].iloc[-1]
+                            first_value = filtered_df[variable_y].iloc[0]
+                            change = ((last_value - first_value) / first_value) * 100 if first_value != 0 else 0
+                            st.metric("Cambio Total", f"{change:.1f}%")
+                        
+            except Exception as e:
+                st.error(f"Error generando gráfico: {e}")
     
-    # SECCIÓN 3: MODELOS PREDICTIVOS
+    # SECCIÓN 3: INSIGHTS AVANZADOS
+    elif seccion == "🔍 Insights Avanzados":
+        st.header("🔍 Insights Avanzados")
+        
+        # Seleccionar variable objetivo para análisis
+        target_options = ['Algas', 'Fósforo reactivo total (mg/L)']
+        target_variable = st.selectbox("Selecciona variable objetivo para análisis:", target_options)
+        
+        if st.button("🔍 Generar Análisis Avanzado"):
+            with st.spinner("Analizando patrones y generando insights..."):
+                
+                # Generar insights por rangos
+                insights = generate_advanced_insights(df, target_variable)
+                
+                st.subheader(f"📊 Análisis de Rangos para {target_variable}")
+                
+                if insights:
+                    # Organizar insights por tipo
+                    if target_variable == 'Algas':
+                        algas_insights = [i for i in insights if i['tipo'] == 'rango_algas']
+                        
+                        if algas_insights:
+                            st.write("**🌱 Factores que Influyen en la Presencia de Algas:**")
+                            
+                            # Ordenar por probabilidad
+                            algas_insights.sort(key=lambda x: x['probabilidad'], reverse=True)
+                            
+                            for insight in algas_insights[:10]:  # Top 10
+                                prob = insight['probabilidad']
+                                if prob > 50:
+                                    st.error(f"⚠️ {insight['descripcion']}")
+                                elif prob > 30:
+                                    st.warning(f"🔶 {insight['descripcion']}")
+                                else:
+                                    st.info(f"ℹ️ {insight['descripcion']}")
+                    
+                    elif target_variable == 'Fósforo reactivo total (mg/L)':
+                        fosforo_insights = [i for i in insights if i['tipo'] == 'rango_fosforo']
+                        
+                        if fosforo_insights:
+                            st.write("**🧪 Factores que Influyen en la Concentración de Fósforo:**")
+                            
+                            # Ordenar por concentración promedio
+                            fosforo_insights.sort(key=lambda x: x['promedio'], reverse=True)
+                            
+                            for insight in fosforo_insights[:10]:  # Top 10
+                                conc = insight['promedio']
+                                if conc > 0.02:
+                                    st.error(f"⚠️ {insight['descripcion']}")
+                                elif conc > 0.01:
+                                    st.warning(f"🔶 {insight['descripcion']}")
+                                else:
+                                    st.info(f"ℹ️ {insight['descripcion']}")
+                
+                # Detectar factores de riesgo
+                st.subheader("⚠️ Factores de Riesgo Detectados")
+                risk_factors = detect_risk_factors(df)
+                
+                if risk_factors:
+                    for risk in risk_factors:
+                        if risk['percentage'] > 30:
+                            st.error(f"🚨 **{risk['factor']}**: {risk['percentage']:.1f}% de las muestras ({risk['count']}/{len(df)})")
+                        elif risk['percentage'] > 15:
+                            st.warning(f"⚠️ **{risk['factor']}**: {risk['percentage']:.1f}% de las muestras ({risk['count']}/{len(df)})")
+                        else:
+                            st.info(f"ℹ️ **{risk['factor']}**: {risk['percentage']:.1f}% de las muestras ({risk['count']}/{len(df)})")
+                else:
+                    st.success("✅ No se detectaron factores de riesgo significativos")
+                
+                # Análisis de correlaciones temporales
+                if 'Fecha' in df.columns:
+                    st.subheader("📈 Análisis de Tendencias Temporales")
+                    
+                    numeric_vars = df.select_dtypes(include=[np.number]).columns.tolist()
+                    
+                    trends = {}
+                    for var in numeric_vars[:8]:  # Limitar a 8 variables
+                        try:
+                            # Calcular tendencia temporal
+                            df_temp = df.dropna(subset=[var, 'Fecha']).sort_values('Fecha')
+                            if len(df_temp) > 5:
+                                x_numeric = np.arange(len(df_temp))
+                                slope, intercept = np.polyfit(x_numeric, df_temp[var], 1)
+                                
+                                # Clasificar tendencia
+                                if abs(slope) < 0.01:
+                                    trend_type = "Estable"
+                                    emoji = "➡️"
+                                elif slope > 0:
+                                    trend_type = "Creciente"
+                                    emoji = "📈"
+                                else:
+                                    trend_type = "Decreciente"
+                                    emoji = "📉"
+                                
+                                trends[var] = {
+                                    'slope': slope,
+                                    'type': trend_type,
+                                    'emoji': emoji
+                                }
+                        except:
+                            continue
+                    
+                    if trends:
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            st.write("**Tendencias Crecientes:**")
+                            growing = {k: v for k, v in trends.items() if v['type'] == 'Creciente'}
+                            for var, trend in sorted(growing.items(), key=lambda x: x[1]['slope'], reverse=True):
+                                st.write(f"{trend['emoji']} {var}: +{trend['slope']:.4f}/día")
+                        
+                        with col2:
+                            st.write("**Tendencias Decrecientes:**")
+                            declining = {k: v for k, v in trends.items() if v['type'] == 'Decreciente'}
+                            for var, trend in sorted(declining.items(), key=lambda x: x[1]['slope']):
+                                st.write(f"{trend['emoji']} {var}: {trend['slope']:.4f}/día")
+                
+                # Recomendaciones automáticas
+                st.subheader("💡 Recomendaciones Automáticas")
+                
+                recommendations = []
+                
+                # Basadas en factores de riesgo
+                high_risk_factors = [r for r in risk_factors if r['percentage'] > 20]
+                if high_risk_factors:
+                    recommendations.append(f"🔍 Monitorear de cerca: {', '.join([r['factor'] for r in high_risk_factors[:3]])}")
+                
+                # Basadas en correlaciones
+                if target_variable == 'Algas' and insights:
+                    high_prob_factors = [i for i in insights if i['tipo'] == 'rango_algas' and i['probabilidad'] > 40]
+                    if high_prob_factors:
+                        recommendations.append(f"🌱 Controlar variables críticas para algas: {', '.join([i['variable'] for i in high_prob_factors[:3]])}")
+                
+                # Basadas en tendencias temporales
+                if trends:
+                    critical_trends = [var for var, trend in trends.items() if 
+                                     var in ['Fósforo reactivo total (mg/L)', 'Algas', 'pH'] and 
+                                     trend['type'] in ['Creciente', 'Decreciente']]
+                    if critical_trends:
+                        recommendations.append(f"📊 Investigar tendencias en: {', '.join(critical_trends[:3])}")
+                
+                if recommendations:
+                    for rec in recommendations:
+                        st.info(rec)
+                else:
+                    st.success("✅ Las condiciones del agua se mantienen dentro de parámetros normales")
+    
+    # SECCIÓN 4: MODELOS PREDICTIVOS (Mantenido igual)
     elif seccion == "🤖 Modelos Predictivos":
         st.header("🤖 Modelos Predictivos")
         
         # Pestañas para los dos modelos
         tab1, tab2 = st.tabs(["🧪 Predictor de Fósforo", "🌱 Predictor de Algas"])
         
-        # Preparar datos para modelos CORREGIDO
+        # Preparar datos para modelos
         @st.cache_data
         def prepare_model_data():
-            # Excluir Folio y Lugar Muestreo como solicita el usuario
+            # Excluir Folio, Lugar Muestreo y variables temporales
             features_cols = ['Comuna', 'Temp. Amb (°C)', 'pH', 'ORP (mV)', 'O2 Sat (%)', 'O2 (ppm)',
                            'Cond (µS/cm)', 'Cond Abs (µS/cm)', 'TDS (ppm)', 'Turb (FNU)', 
                            'Temp Agua (°C)', 'Presión (PSI)', 'Viento', 'Oleaje', 'Musgo', 'Cielo']
@@ -305,12 +587,6 @@ if df is not None:
             # Crear variable binaria para algas
             model_df['Algas_presente'] = (model_df['Algas'] > 0).astype(int)
             
-            # Verificar tipos de datos
-            st.write("🔍 **Tipos de datos verificados:**")
-            for col in ['Comuna_encoded', 'Temp. Amb (°C)', 'pH', 'Fósforo reactivo total (mg/L)']:
-                if col in model_df.columns:
-                    st.write(f"  - {col}: {model_df[col].dtype}")
-            
             return model_df, le_comuna
         
         model_df, le_comuna = prepare_model_data()
@@ -322,7 +598,7 @@ if df is not None:
             with tab1:
                 st.subheader("🧪 Predicción de Concentración de Fósforo")
                 
-                # Entrenar modelo de fósforo CORREGIDO
+                # Entrenar modelo de fósforo
                 @st.cache_resource
                 def train_phosphorus_model():
                     try:
@@ -369,16 +645,25 @@ if df is not None:
                     with col2:
                         st.metric("R² Score", f"{phos_r2:.3f}")
                     
-                    # Correlaciones estadísticas
-                    st.subheader("📊 Correlaciones con Fósforo")
+                    # Correlaciones estadísticas mejoradas
+                    st.subheader("📊 Análisis de Correlaciones con Fósforo")
                     correlations = model_df[['Fósforo reactivo total (mg/L)', 'Temp. Amb (°C)', 'pH', 
-                                           'O2 Sat (%)', 'Turb (FNU)']].corr()['Fósforo reactivo total (mg/L)'].sort_values(key=abs, ascending=False)
+                                           'O2 Sat (%)', 'Turb (FNU)', 'Temp Agua (°C)', 'ORP (mV)']].corr()['Fósforo reactivo total (mg/L)'].sort_values(key=abs, ascending=False)
                     
-                    for var, corr in correlations.items():
-                        if var != 'Fósforo reactivo total (mg/L)':
-                            if abs(corr) > 0.1:
-                                direction = "aumenta" if corr > 0 else "disminuye"
-                                st.info(f"📈 Cuando {var} aumenta, el fósforo {direction} (correlación: {corr:.3f})")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.write("**Correlaciones Positivas:**")
+                        positive_corr = correlations[correlations > 0.1]
+                        for var, corr in positive_corr.items():
+                            if var != 'Fósforo reactivo total (mg/L)':
+                                st.success(f"📈 {var}: +{corr:.3f}")
+                    
+                    with col2:
+                        st.write("**Correlaciones Negativas:**")
+                        negative_corr = correlations[correlations < -0.1]
+                        for var, corr in negative_corr.items():
+                            if var != 'Fósforo reactivo total (mg/L)':
+                                st.info(f"📉 {var}: {corr:.3f}")
                     
                     # Predictor interactivo
                     st.subheader("🔮 Hacer Predicción")
@@ -422,17 +707,19 @@ if df is not None:
                         st.success(f"🧪 **Concentración de Fósforo Predicha: {prediction:.6f} mg/L**")
                         
                         if prediction > 0.02:
-                            st.warning("⚠️ Concentración alta de fósforo detectada")
+                            st.error("⚠️ Concentración alta de fósforo detectada - Riesgo de eutrofización")
+                        elif prediction > 0.01:
+                            st.warning("🔶 Concentración moderada de fósforo - Monitoreo recomendado")
                         elif prediction < 0:
                             st.info("ℹ️ Concentración muy baja o no detectable")
                         else:
-                            st.info("✅ Concentración normal de fósforo")
+                            st.success("✅ Concentración normal de fósforo")
             
             # MODELO DE ALGAS
             with tab2:
                 st.subheader("🌱 Predicción de Presencia de Algas")
                 
-                # Entrenar modelo de algas CORREGIDO
+                # Entrenar modelo de algas
                 @st.cache_resource
                 def train_algae_model():
                     try:
@@ -474,17 +761,27 @@ if df is not None:
                     # Mostrar métricas del modelo
                     st.metric("Precisión del Modelo", f"{algae_accuracy:.3f}")
                     
-                    # Correlaciones estadísticas
-                    st.subheader("📊 Correlaciones con Presencia de Algas")
+                    # Correlaciones estadísticas mejoradas
+                    st.subheader("📊 Análisis de Correlaciones con Presencia de Algas")
                     correlations_algae = model_df[['Algas_presente', 'Temp. Amb (°C)', 'pH', 'O2 Sat (%)', 
-                                                 'Turb (FNU)', 'Fósforo reactivo total (mg/L)']].corr()['Algas_presente'].sort_values(key=abs, ascending=False)
+                                                 'Turb (FNU)', 'Fósforo reactivo total (mg/L)', 'Temp Agua (°C)']].corr()['Algas_presente'].sort_values(key=abs, ascending=False)
                     
-                    for var, corr in correlations_algae.items():
-                        if var != 'Algas_presente':
-                            if abs(corr) > 0.1:
-                                direction = "aumenta" if corr > 0 else "disminuye"
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.write("**Factores que Favorecen Algas:**")
+                        positive_corr = correlations_algae[correlations_algae > 0.1]
+                        for var, corr in positive_corr.items():
+                            if var != 'Algas_presente':
                                 percentage = abs(corr) * 100
-                                st.info(f"📈 Cuando {var} aumenta, la probabilidad de algas {direction} (~{percentage:.1f}% de correlación)")
+                                st.success(f"📈 {var}: +{percentage:.1f}%")
+                    
+                    with col2:
+                        st.write("**Factores que Inhiben Algas:**")
+                        negative_corr = correlations_algae[correlations_algae < -0.1]
+                        for var, corr in negative_corr.items():
+                            if var != 'Algas_presente':
+                                percentage = abs(corr) * 100
+                                st.info(f"📉 {var}: -{percentage:.1f}%")
                     
                     # Predictor interactivo
                     st.subheader("🔮 Hacer Predicción")
@@ -529,6 +826,13 @@ if df is not None:
                         if prediction_algae == 1:
                             st.error(f"🌱 **PRESENCIA DE ALGAS DETECTADA** (Probabilidad: {probability[1]:.2%})")
                             st.warning("⚠️ Se recomienda monitoreo adicional del cuerpo de agua")
+                            
+                            # Recomendaciones específicas
+                            if temp_agua_a > 22:
+                                st.info("🌡️ Temperatura del agua elevada favorece el crecimiento de algas")
+                            if ph_val_a > 8:
+                                st.info("🧪 pH alcalino puede promover proliferación algal")
+                                
                         else:
                             st.success(f"✅ **NO SE DETECTA PRESENCIA DE ALGAS** (Probabilidad: {probability[0]:.2%})")
                             st.info("ℹ️ Condiciones del agua aparentemente normales")
@@ -536,8 +840,8 @@ if df is not None:
 else:
     st.error("❌ No se pudo cargar el archivo CSV.")
     st.info("📁 Archivos CSV esperados en el directorio raíz:")
+    st.write("   - Consolidado Entrenamiento  Tabla Fechas.csv")
     st.write("   - Consolidado Entrenamiento - Tabla Completa (1).csv")
-    st.write("   - Consolidado Entrenamiento  Tabla Completa 1.csv")
     st.write("   - data.csv")
     st.write("   - dataset.csv")
 
