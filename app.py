@@ -34,8 +34,11 @@ def load_and_preprocess_data():
     try:
         # Lista de posibles nombres de archivo CSV
         possible_files = [
-            'Consolidado Entrenamiento - Tabla Fechas.csv',
+            'Consolidado Entrenamiento  Tabla Fechas.csv',
             'Consolidado Entrenamiento - Tabla Completa (1).csv',
+            'Consolidado Entrenamiento  Tabla Completa 1.csv',
+            'data.csv',
+            'dataset.csv'
         ]
         
         df = None
@@ -43,7 +46,7 @@ def load_and_preprocess_data():
         
         # Intentar cargar cada archivo posible
         for filename in possible_files:
-            try: 
+            try:
                 df = pd.read_csv(filename)
                 used_file = filename
                 st.success(f"✅ Datos cargados desde: {filename}")
@@ -78,14 +81,31 @@ def load_and_preprocess_data():
         # Procesar fechas si existe la columna Día
         if 'Día' in df.columns:
             try:
-                df['Fecha'] = pd.to_datetime(df['Día'], errors='coerce')
-                df['Día_Semana'] = df['Fecha'].dt.day_name()
-                df['Mes'] = df['Fecha'].dt.month_name()
-                df['Día_Mes'] = df['Fecha'].dt.day
-                df['Semana'] = df['Fecha'].dt.isocalendar().week
-                st.success("✅ Fechas procesadas correctamente")
+                # Intentar diferentes formatos de fecha
+                df['Fecha'] = pd.to_datetime(df['Día'], errors='coerce', dayfirst=True)
+                
+                # Verificar si hay fechas válidas
+                valid_dates = df['Fecha'].notna().sum()
+                total_dates = len(df)
+                
+                if valid_dates > 0:
+                    # Solo crear campos derivados si hay fechas válidas
+                    df['Día_Semana'] = df['Fecha'].dt.day_name()
+                    df['Mes'] = df['Fecha'].dt.month_name()
+                    df['Día_Mes'] = df['Fecha'].dt.day
+                    df['Semana'] = df['Fecha'].dt.isocalendar().week
+                    st.success(f"✅ Fechas procesadas: {valid_dates}/{total_dates} válidas")
+                    
+                    # Mostrar ejemplos de fechas procesadas
+                    sample_dates = df[df['Fecha'].notna()]['Fecha'].head(3)
+                    st.info(f"📅 Ejemplos de fechas: {', '.join([d.strftime('%d/%m/%Y') for d in sample_dates])}")
+                else:
+                    st.warning("⚠️ No se pudieron procesar fechas válidas")
+                    df['Fecha'] = None
+                    
             except Exception as e:
                 st.warning(f"⚠️ Error procesando fechas: {e}")
+                df['Fecha'] = None
         
         # Limpiar nombres de lugares y comunas
         df['Lugar Muestreo'] = df['Lugar Muestreo'].str.strip().str.title()
@@ -263,13 +283,25 @@ if df is not None:
     elif seccion == "📈 Análisis Temporal":
         st.header("📈 Análisis Temporal")
         
-        if 'Fecha' not in df.columns:
-            st.error("❌ No se encontró información de fechas en los datos")
+        # Verificar si hay fechas válidas
+        if 'Fecha' not in df.columns or df['Fecha'].notna().sum() == 0:
+            st.error("❌ No se encontró información de fechas válidas en los datos")
+            st.info("📋 Para usar análisis temporal, asegúrate de que:")
+            st.write("   - La columna 'Día' contenga fechas válidas")
+            st.write("   - El formato de fecha sea reconocible (dd/mm/aaaa, yyyy-mm-dd, etc.)")
         else:
+            # Filtrar solo datos con fechas válidas
+            df_temporal = df[df['Fecha'].notna()].copy()
+            
+            st.info(f"📊 Datos temporales disponibles: {len(df_temporal)} de {len(df)} registros")
+            
             # Obtener todas las variables disponibles
-            all_vars = df.columns.tolist()
-            numeric_vars = df.select_dtypes(include=[np.number]).columns.tolist()
-            categorical_vars = df.select_dtypes(include=['object']).columns.tolist()
+            numeric_vars = df_temporal.select_dtypes(include=[np.number]).columns.tolist()
+            categorical_vars = df_temporal.select_dtypes(include=['object']).columns.tolist()
+            
+            # Remover variables que no queremos en las opciones
+            numeric_vars = [v for v in numeric_vars if v not in ['Día_Mes', 'Semana']]
+            categorical_vars = [v for v in categorical_vars if v not in ['Folio', 'Día']]
             
             st.subheader("🎯 Configuración de Análisis Temporal")
             
@@ -282,7 +314,7 @@ if df is not None:
                 # Opción de agrupación temporal
                 time_grouping = st.selectbox(
                     "Agrupación temporal:",
-                    ["Diario", "Semanal", "Por Lugar", "Por Comuna"]
+                    ["Sin agrupar", "Por día", "Por semana", "Por mes", "Por lugar", "Por comuna"]
                 )
                 
                 # Filtros adicionales
@@ -293,105 +325,167 @@ if df is not None:
                 chart_type = st.selectbox(
                     "Tipo de gráfico:",
                     ["Línea Temporal", "Dispersión Temporal", "Box Plot Temporal", 
-                     "Heatmap Temporal", "Tendencia con Regresión"]
+                     "Histograma por Período", "Tendencia con Regresión"]
                 )
                 
                 # Variables adicionales
                 color_by = st.selectbox("Colorear por:", ["Ninguno"] + categorical_vars)
-                size_by = st.selectbox("Tamaño por:", ["Ninguno"] + numeric_vars)
+                if len(numeric_vars) > 1:
+                    size_options = ["Ninguno"] + [v for v in numeric_vars if v != variable_y]
+                    size_by = st.selectbox("Tamaño por:", size_options)
+                else:
+                    size_by = "Ninguno"
             
             # Aplicar filtros si se seleccionaron
-            filtered_df = df.copy()
-            if filter_by != "Ninguno":
-                filter_values = st.multiselect(
-                    f"Valores de {filter_by}:",
-                    filtered_df[filter_by].unique(),
-                    default=filtered_df[filter_by].unique()
-                )
-                filtered_df = filtered_df[filtered_df[filter_by].isin(filter_values)]
+            filtered_df = df_temporal.copy()
+            if filter_by != "Ninguno" and filter_by in filtered_df.columns:
+                available_values = filtered_df[filter_by].dropna().unique()
+                if len(available_values) > 0:
+                    filter_values = st.multiselect(
+                        f"Valores de {filter_by}:",
+                        available_values,
+                        default=available_values
+                    )
+                    filtered_df = filtered_df[filtered_df[filter_by].isin(filter_values)]
             
-            # Generar gráfico temporal
-            st.subheader(f"📊 {chart_type}: {variable_y}")
-            
-            try:
-                if chart_type == "Línea Temporal":
-                    if time_grouping == "Diario":
-                        daily_data = filtered_df.groupby('Fecha')[variable_y].mean().reset_index()
-                        fig = px.line(daily_data, x='Fecha', y=variable_y,
-                                    title=f"Evolución Diaria de {variable_y}",
-                                    template="plotly_white")
-                    else:
-                        fig = px.line(filtered_df, x='Fecha', y=variable_y,
-                                    color=color_by if color_by != "Ninguno" else None,
-                                    title=f"Evolución Temporal de {variable_y}",
-                                    template="plotly_white")
-                    
-                elif chart_type == "Dispersión Temporal":
-                    fig = px.scatter(filtered_df, x='Fecha', y=variable_y,
-                                   color=color_by if color_by != "Ninguno" else None,
-                                   size=size_by if size_by != "Ninguno" else None,
-                                   title=f"Dispersión Temporal de {variable_y}",
-                                   template="plotly_white")
+            if len(filtered_df) == 0:
+                st.error("❌ No hay datos después del filtrado")
+            else:
+                # Generar gráfico temporal
+                st.subheader(f"📊 {chart_type}: {variable_y}")
                 
-                elif chart_type == "Box Plot Temporal":
-                    if 'Mes' in filtered_df.columns:
-                        fig = px.box(filtered_df, x='Mes', y=variable_y,
-                                   color=color_by if color_by != "Ninguno" else None,
-                                   title=f"Distribución Mensual de {variable_y}",
-                                   template="plotly_white")
-                    else:
-                        fig = px.box(filtered_df, x='Día_Semana', y=variable_y,
-                                   title=f"Distribución por Día de la Semana de {variable_y}",
-                                   template="plotly_white")
-                
-                elif chart_type == "Heatmap Temporal":
-                    if 'Día_Mes' in filtered_df.columns and 'Mes' in filtered_df.columns:
-                        pivot_data = filtered_df.pivot_table(
-                            values=variable_y, 
-                            index='Día_Mes', 
-                            columns='Mes', 
-                            aggfunc='mean'
-                        )
-                        fig = px.imshow(pivot_data, 
-                                      title=f"Heatmap Temporal de {variable_y}",
-                                      template="plotly_white",
-                                      aspect="auto")
-                    else:
-                        st.warning("No se puede generar heatmap temporal sin información de día y mes")
-                        fig = None
-                
-                elif chart_type == "Tendencia con Regresión":
-                    fig = px.scatter(filtered_df, x='Fecha', y=variable_y,
-                                   color=color_by if color_by != "Ninguno" else None,
-                                   trendline="ols",
-                                   title=f"Tendencia de {variable_y} con Regresión",
-                                   template="plotly_white")
-                
-                if fig:
-                    st.plotly_chart(fig, use_container_width=True)
+                try:
+                    fig = None
                     
-                    # Mostrar estadísticas temporales
-                    st.subheader("📊 Estadísticas Temporales")
-                    col1, col2, col3 = st.columns(3)
-                    
-                    with col1:
-                        trend_slope = np.polyfit(range(len(filtered_df)), filtered_df[variable_y].dropna(), 1)[0]
-                        trend_direction = "📈 Creciente" if trend_slope > 0 else "📉 Decreciente"
-                        st.metric("Tendencia General", trend_direction)
-                    
-                    with col2:
-                        volatility = filtered_df[variable_y].std()
-                        st.metric("Volatilidad (Desv. Est.)", f"{volatility:.4f}")
-                    
-                    with col3:
-                        if len(filtered_df) > 1:
-                            last_value = filtered_df[variable_y].iloc[-1]
-                            first_value = filtered_df[variable_y].iloc[0]
-                            change = ((last_value - first_value) / first_value) * 100 if first_value != 0 else 0
-                            st.metric("Cambio Total", f"{change:.1f}%")
+                    if chart_type == "Línea Temporal":
+                        if time_grouping == "Por día":
+                            daily_data = filtered_df.groupby(filtered_df['Fecha'].dt.date)[variable_y].mean().reset_index()
+                            daily_data['Fecha'] = pd.to_datetime(daily_data['Fecha'])
+                            fig = px.line(daily_data, x='Fecha', y=variable_y,
+                                        title=f"Evolución Diaria Promedio de {variable_y}",
+                                        template="plotly_white")
+                        elif time_grouping == "Por semana":
+                            weekly_data = filtered_df.groupby('Semana')[variable_y].mean().reset_index()
+                            fig = px.line(weekly_data, x='Semana', y=variable_y,
+                                        title=f"Evolución Semanal Promedio de {variable_y}",
+                                        template="plotly_white")
+                        elif time_grouping == "Por mes" and 'Mes' in filtered_df.columns:
+                            monthly_data = filtered_df.groupby('Mes')[variable_y].mean().reset_index()
+                            fig = px.line(monthly_data, x='Mes', y=variable_y,
+                                        title=f"Evolución Mensual Promedio de {variable_y}",
+                                        template="plotly_white")
+                        else:
+                            # Sin agrupar
+                            fig = px.line(filtered_df.sort_values('Fecha'), x='Fecha', y=variable_y,
+                                        color=color_by if color_by != "Ninguno" else None,
+                                        title=f"Evolución Temporal de {variable_y}",
+                                        template="plotly_white")
                         
-            except Exception as e:
-                st.error(f"Error generando gráfico: {e}")
+                    elif chart_type == "Dispersión Temporal":
+                        fig = px.scatter(filtered_df, x='Fecha', y=variable_y,
+                                       color=color_by if color_by != "Ninguno" else None,
+                                       size=size_by if size_by != "Ninguno" else None,
+                                       title=f"Dispersión Temporal de {variable_y}",
+                                       template="plotly_white")
+                    
+                    elif chart_type == "Box Plot Temporal":
+                        if 'Mes' in filtered_df.columns and filtered_df['Mes'].notna().sum() > 0:
+                            fig = px.box(filtered_df, x='Mes', y=variable_y,
+                                       color=color_by if color_by != "Ninguno" else None,
+                                       title=f"Distribución Mensual de {variable_y}",
+                                       template="plotly_white")
+                        elif 'Día_Semana' in filtered_df.columns:
+                            fig = px.box(filtered_df, x='Día_Semana', y=variable_y,
+                                       color=color_by if color_by != "Ninguno" else None,
+                                       title=f"Distribución por Día de la Semana de {variable_y}",
+                                       template="plotly_white")
+                        else:
+                            # Fallback: agrupar por semana
+                            fig = px.box(filtered_df, x='Semana', y=variable_y,
+                                       title=f"Distribución Semanal de {variable_y}",
+                                       template="plotly_white")
+                    
+                    elif chart_type == "Histograma por Período":
+                        if 'Mes' in filtered_df.columns:
+                            fig = px.histogram(filtered_df, x=variable_y, 
+                                             color='Mes',
+                                             title=f"Distribución de {variable_y} por Mes",
+                                             template="plotly_white")
+                        else:
+                            fig = px.histogram(filtered_df, x=variable_y,
+                                             title=f"Distribución de {variable_y}",
+                                             template="plotly_white")
+                    
+                    elif chart_type == "Tendencia con Regresión":
+                        fig = px.scatter(filtered_df, x='Fecha', y=variable_y,
+                                       color=color_by if color_by != "Ninguno" else None,
+                                       trendline="ols",
+                                       title=f"Tendencia de {variable_y} con Regresión",
+                                       template="plotly_white")
+                    
+                    if fig:
+                        st.plotly_chart(fig, use_container_width=True)
+                        
+                        # Mostrar estadísticas temporales
+                        st.subheader("📊 Estadísticas Temporales")
+                        col1, col2, col3 = st.columns(3)
+                        
+                        try:
+                            with col1:
+                                # Calcular tendencia
+                                sorted_data = filtered_df.sort_values('Fecha')
+                                if len(sorted_data) > 1:
+                                    x_vals = np.arange(len(sorted_data))
+                                    y_vals = sorted_data[variable_y].dropna()
+                                    if len(y_vals) > 1:
+                                        trend_slope = np.polyfit(x_vals[:len(y_vals)], y_vals, 1)[0]
+                                        trend_direction = "📈 Creciente" if trend_slope > 0 else "📉 Decreciente" if trend_slope < 0 else "➡️ Estable"
+                                        st.metric("Tendencia General", trend_direction)
+                                    else:
+                                        st.metric("Tendencia General", "No disponible")
+                                else:
+                                    st.metric("Tendencia General", "Datos insuficientes")
+                            
+                            with col2:
+                                volatility = filtered_df[variable_y].std()
+                                if not np.isnan(volatility):
+                                    st.metric("Volatilidad (Desv. Est.)", f"{volatility:.4f}")
+                                else:
+                                    st.metric("Volatilidad", "No disponible")
+                            
+                            with col3:
+                                if len(filtered_df) > 1:
+                                    sorted_data = filtered_df.sort_values('Fecha')
+                                    last_values = sorted_data[variable_y].dropna()
+                                    if len(last_values) >= 2:
+                                        last_value = last_values.iloc[-1]
+                                        first_value = last_values.iloc[0]
+                                        if first_value != 0:
+                                            change = ((last_value - first_value) / first_value) * 100
+                                            st.metric("Cambio Total", f"{change:.1f}%")
+                                        else:
+                                            st.metric("Cambio Total", "No calculable")
+                                    else:
+                                        st.metric("Cambio Total", "Datos insuficientes")
+                                else:
+                                    st.metric("Cambio Total", "Una sola muestra")
+                        except Exception as e:
+                            st.warning(f"Error calculando estadísticas: {e}")
+                    else:
+                        st.error("No se pudo generar el gráfico con los parámetros seleccionados")
+                        
+                except Exception as e:
+                    st.error(f"Error generando gráfico: {e}")
+                    st.write("Detalles del error para debugging:")
+                    st.write(f"- Datos filtrados: {len(filtered_df)} filas")
+                    st.write(f"- Variable Y: {variable_y}")
+                    st.write(f"- Tipo de datos: {filtered_df[variable_y].dtype}")
+                    st.write(f"- Valores nulos: {filtered_df[variable_y].isnull().sum()}")
+                    
+                    # Mostrar muestra de datos para debugging
+                    if len(filtered_df) > 0:
+                        st.write("Muestra de datos:")
+                        st.dataframe(filtered_df[['Fecha', variable_y]].head())
     
     # SECCIÓN 3: INSIGHTS AVANZADOS
     elif seccion == "🔍 Insights Avanzados":
@@ -850,8 +944,8 @@ else:
 st.markdown("---")
 st.markdown("""
 <div style='text-align: center'>
-    <p><strong>🌊 Sistema de Análisis de Calidad del Agua</strong></p>
+    <p><strong>🌊 Sistema de Monitero  Calidad del Agua</strong></p>
     <p>Región de la Araucanía - Lagos Pucón y Villarrica</p>
-    <p><em>Desarrollado para monitoreo ambiental y divulgación científica</em></p>
+    <p><em>Desarrollado por BIOREN UFRO con el apoyo de Ciencia 2030/em></p>
 </div>
 """, unsafe_allow_html=True)
