@@ -17,14 +17,14 @@ warnings.filterwarnings('ignore')
 
 # Configuración de la página
 st.set_page_config(
-    page_title="Análisis de Calidad del Agua - Lago Villarrica",
+    page_title="Monitoreo Lago Villarrica",
     page_icon="🌊",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
 # Título principal
-st.title("🌊 Sistema de Análisis de Calidad del Agua")
+st.title("🌊 Sistema de Monitoreo ")
 st.subheader("Lago Villarrica - Región de la Araucanía")
 
 # Función para cargar y preprocesar datos MEJORADA
@@ -77,8 +77,24 @@ def load_and_preprocess_data():
         # Procesar fechas si existe la columna Día
         if 'Día' in df.columns:
             try:
-                # Intentar diferentes formatos de fecha
-                df['Fecha'] = pd.to_datetime(df['Día'], errors='coerce', dayfirst=True)
+                # Mostrar muestra de datos originales para debugging
+                st.info(f"📋 Muestra de fechas originales: {df['Día'].head().tolist()}")
+                
+                # Intentar diferentes formatos de fecha más específicos
+                df['Fecha'] = pd.to_datetime(df['Día'], errors='coerce', dayfirst=True, format=None)
+                
+                # Si el primer método no funciona, intentar formatos específicos
+                if df['Fecha'].isna().all():
+                    # Intentar formato ISO
+                    df['Fecha'] = pd.to_datetime(df['Día'], errors='coerce', format='%Y-%m-%d')
+                    
+                if df['Fecha'].isna().all():
+                    # Intentar formato DD/MM/YYYY
+                    df['Fecha'] = pd.to_datetime(df['Día'], errors='coerce', format='%d/%m/%Y')
+                    
+                if df['Fecha'].isna().all():
+                    # Intentar formato DD-MM-YYYY
+                    df['Fecha'] = pd.to_datetime(df['Día'], errors='coerce', format='%d-%m-%Y')
                 
                 # Verificar si hay fechas válidas
                 valid_dates = df['Fecha'].notna().sum()
@@ -86,22 +102,30 @@ def load_and_preprocess_data():
                 
                 if valid_dates > 0:
                     # Solo crear campos derivados si hay fechas válidas
-                    df['Día_Semana'] = df['Fecha'].dt.day_name()
-                    df['Mes'] = df['Fecha'].dt.month_name()
-                    df['Día_Mes'] = df['Fecha'].dt.day
-                    df['Semana'] = df['Fecha'].dt.isocalendar().week
+                    df_with_dates = df[df['Fecha'].notna()].copy()
+                    df.loc[df['Fecha'].notna(), 'Día_Semana'] = df_with_dates['Fecha'].dt.day_name()
+                    df.loc[df['Fecha'].notna(), 'Mes'] = df_with_dates['Fecha'].dt.month_name()
+                    df.loc[df['Fecha'].notna(), 'Día_Mes'] = df_with_dates['Fecha'].dt.day
+                    df.loc[df['Fecha'].notna(), 'Semana'] = df_with_dates['Fecha'].dt.isocalendar().week
+                    
                     st.success(f"✅ Fechas procesadas: {valid_dates}/{total_dates} válidas")
                     
                     # Mostrar ejemplos de fechas procesadas
                     sample_dates = df[df['Fecha'].notna()]['Fecha'].head(3)
-                    st.info(f"📅 Ejemplos de fechas: {', '.join([d.strftime('%d/%m/%Y') for d in sample_dates])}")
+                    if len(sample_dates) > 0:
+                        st.info(f"📅 Ejemplos de fechas procesadas: {', '.join([d.strftime('%d/%m/%Y') for d in sample_dates])}")
                 else:
                     st.warning("⚠️ No se pudieron procesar fechas válidas")
-                    df['Fecha'] = None
+                    st.write("Formatos de fecha intentados:")
+                    st.write("- Automático con día primero")
+                    st.write("- YYYY-MM-DD")
+                    st.write("- DD/MM/YYYY")
+                    st.write("- DD-MM-YYYY")
+                    df['Fecha'] = pd.NaT  # Asignar NaT explícitamente
                     
             except Exception as e:
-                st.warning(f"⚠️ Error procesando fechas: {e}")
-                df['Fecha'] = None
+                st.error(f"⚠️ Error procesando fechas: {e}")
+                df['Fecha'] = pd.NaT
         
         # Limpiar nombres de lugares y comunas
         df['Lugar Muestreo'] = df['Lugar Muestreo'].str.strip().str.title()
@@ -940,8 +964,8 @@ else:
 st.markdown("---")
 st.markdown("""
 <div style='text-align: center'>
-    <p><strong>🌊 Sistema de Monitero  Calidad del Agua</strong></p>
-    <p>Región de la Araucanía - Lagos Pucón y Villarrica</p>
-    <p><em>Desarrollado por BIOREN UFRO con el apoyo de Ciencia 2030/em></p>
+    <p><strong>🌊 Sistema de Análisis de Moniterio del Agua</strong></p>
+    <p>Región de la Araucanía - Lago Villarrica</p>
+    <p><em>Desarrollado por BIOREN UFRO con el apoyo de Ciencia 2030</em></p>
 </div>
 """, unsafe_allow_html=True)
