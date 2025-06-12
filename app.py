@@ -34,7 +34,7 @@ def load_and_preprocess_data():
     try:
         # Lista de posibles nombres de archivo CSV
         possible_files = [
-            'Consolidado Entrenamiento - Tabla Fechas.csv'
+            'Consolidado Entrenamiento - Tabla Fechas.csv',
             'Consolidado Entrenamiento - Tabla Completa (1).csv',
         ]
         
