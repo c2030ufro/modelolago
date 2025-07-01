@@ -91,9 +91,6 @@ def load_and_preprocess_data(dataset_type="completo"):
         # Limpiar nombres de columnas
         df.columns = df.columns.str.strip()
         
-        # Mostrar información del archivo cargado
-        st.info(f"📊 Archivo cargado: {used_file} ({len(df)} filas, {len(df.columns)} columnas)")
-        
         # Identificar columnas que pueden tener valores numéricos con comas
         if dataset_type == "completo":
             categorical_cols = ['Día', 'Folio', 'Lugar Muestreo', 'Comuna']
@@ -109,9 +106,6 @@ def load_and_preprocess_data(dataset_type="completo"):
         # Procesar fechas si existe la columna Día
         if 'Día' in df.columns:
             try:
-                # Mostrar muestra de datos originales para debugging
-                st.info(f"📋 Muestra de fechas originales: {df['Día'].head().tolist()}")
-                
                 # Intentar diferentes formatos de fecha más específicos
                 df['Fecha'] = pd.to_datetime(df['Día'], errors='coerce', dayfirst=True, format=None)
                 
@@ -125,9 +119,8 @@ def load_and_preprocess_data(dataset_type="completo"):
                 if df['Fecha'].isna().all():
                     df['Fecha'] = pd.to_datetime(df['Día'], errors='coerce', format='%d-%m-%Y')
                 
-                # Verificar si hay fechas válidas
+                # Verificar si hay fechas válidas y crear campos derivados
                 valid_dates = df['Fecha'].notna().sum()
-                total_dates = len(df)
                 
                 if valid_dates > 0:
                     df_with_dates = df[df['Fecha'].notna()].copy()
@@ -135,18 +128,10 @@ def load_and_preprocess_data(dataset_type="completo"):
                     df.loc[df['Fecha'].notna(), 'Mes'] = df_with_dates['Fecha'].dt.month_name()
                     df.loc[df['Fecha'].notna(), 'Día_Mes'] = df_with_dates['Fecha'].dt.day
                     df.loc[df['Fecha'].notna(), 'Semana'] = df_with_dates['Fecha'].dt.isocalendar().week
-                    
-                    st.success(f"✅ Fechas procesadas: {valid_dates}/{total_dates} válidas")
-                    
-                    sample_dates = df[df['Fecha'].notna()]['Fecha'].head(3)
-                    if len(sample_dates) > 0:
-                        st.info(f"📅 Ejemplos de fechas procesadas: {', '.join([d.strftime('%d/%m/%Y') for d in sample_dates])}")
                 else:
-                    st.warning("⚠️ No se pudieron procesar fechas válidas")
                     df['Fecha'] = pd.NaT
                     
             except Exception as e:
-                st.error(f"⚠️ Error procesando fechas: {e}")
                 df['Fecha'] = pd.NaT
         
         # Limpiar nombres de lugares y comunas (solo para mostrar, no para análisis en nitrógeno)
@@ -375,12 +360,9 @@ if df is not None:
         numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
         st.dataframe(df[numeric_cols].describe())
     
-    # SECCIÓN 2: ANÁLISIS TEMPORAL (mantener igual)
+    # SECCIÓN 2: ANÁLISIS TEMPORAL
     elif seccion == "📈 Análisis Temporal":
         st.header("📈 Análisis Temporal")
-        
-        if current_dataset_type == "nitrogeno":
-            st.warning("⚠️ **Análisis temporal limitado**: Dataset de nitrógeno con menor cantidad de datos temporales")
         
         # [El resto del código de análisis temporal permanece igual]
         # Verificar si hay fechas válidas
@@ -601,22 +583,12 @@ if df is not None:
             
             model_df = df[features_cols + target_cols].copy()
             
-            # Mostrar información de debug
-            st.write("📋 **Debug: Información de los datos**")
-            st.write(f"Filas antes de limpiar: {len(model_df)}")
-            st.write(f"Valores nulos por columna:")
-            null_counts = model_df.isnull().sum()
-            for col, count in null_counts.items():
-                if count > 0:
-                    st.write(f"  - {col}: {count} valores nulos")
-            
             # Remover filas con valores nulos
             model_df = model_df.dropna()
-            st.write(f"Filas después de limpiar: {len(model_df)}")
             
             min_samples = 5 if dataset_type == "nitrogeno" else 10
             if len(model_df) < min_samples:
-                st.error(f"⚠️ Muy pocas muestras válidas para entrenar modelos. Verifica los datos. (Mínimo: {min_samples})")
+                st.error(f"⚠️ Muy pocas muestras válidas para entrenar modelos. (Mínimo: {min_samples})")
                 return None, None
             
             # Codificar Comuna solo si existe
@@ -767,13 +739,10 @@ if df is not None:
                                 st.success("✅ Concentración normal de nitrógeno amoniacal")
             
             else:
-                # MODELOS ORIGINALES PARA DATASET COMPLETO
-                # [Incluir aquí todo el código original de los modelos de fósforo y algas]
                 # MODELO DE FÓSFORO
                 with tab1:
                     st.subheader("🧪 Predicción de Concentración de Fósforo")
                     
-                    # [Todo el código original del modelo de fósforo]
                     # Entrenar modelo de fósforo
                     @st.cache_resource
                     def train_phosphorus_model():
@@ -821,12 +790,197 @@ if df is not None:
                         with col2:
                             st.metric("R² Score", f"{phos_r2:.3f}")
                         
-                        # [Resto del código del modelo de fósforo...]
+                        # Correlaciones estadísticas mejoradas
+                        st.subheader("📊 Análisis de Correlaciones con Fósforo")
+                        correlations = model_df[['Fósforo reactivo total (mg/L)', 'Temp. Amb (°C)', 'pH', 
+                                               'O2 Sat (%)', 'Turb (FNU)', 'Temp Agua (°C)', 'ORP (mV)']].corr()['Fósforo reactivo total (mg/L)'].sort_values(key=abs, ascending=False)
+                        
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.write("**Correlaciones Positivas:**")
+                            positive_corr = correlations[correlations > 0.1]
+                            for var, corr in positive_corr.items():
+                                if var != 'Fósforo reactivo total (mg/L)':
+                                    st.success(f"📈 {var}: +{corr:.3f}")
+                        
+                        with col2:
+                            st.write("**Correlaciones Negativas:**")
+                            negative_corr = correlations[correlations < -0.1]
+                            for var, corr in negative_corr.items():
+                                if var != 'Fósforo reactivo total (mg/L)':
+                                    st.info(f"📉 {var}: {corr:.3f}")
+                        
+                        # Predictor interactivo
+                        st.subheader("🔮 Hacer Predicción")
+                        
+                        col1, col2, col3 = st.columns(3)
+                        
+                        with col1:
+                            st.write("**Variables Físicas**")
+                            temp_amb = st.slider("Temperatura Ambiente (°C)", 10.0, 30.0, 20.0)
+                            temp_agua = st.slider("Temperatura Agua (°C)", 10.0, 30.0, 20.0)
+                            presion = st.slider("Presión (PSI)", 13.0, 15.0, 14.3)
+                        
+                        with col2:
+                            st.write("**Variables Químicas**")
+                            ph_val = st.slider("pH", 6.0, 9.0, 7.5)
+                            orp_val = st.slider("ORP (mV)", 150, 300, 220)
+                            o2_sat = st.slider("O2 Saturación (%)", 70, 120, 95)
+                            o2_ppm = st.slider("O2 (ppm)", 6.0, 12.0, 8.5)
+                            cond = st.slider("Conductividad (µS/cm)", 40, 80, 60)
+                            cond_abs = st.slider("Conductividad Abs (µS/cm)", 40, 80, 55)
+                            tds = st.slider("TDS (ppm)", 20, 50, 30)
+                            turb = st.slider("Turbidez (FNU)", 0.0, 5.0, 0.5)
+                        
+                        with col3:
+                            st.write("**Variables Observacionales**")
+                            comuna_pred = st.selectbox("Comuna", ["Pucón", "Villarrica"])
+                            viento_pred = st.selectbox("Viento", [0, 1, 2, 3], format_func=lambda x: {0: 'Sin viento', 1: 'Leve', 2: 'Moderado', 3: 'Fuerte'}[x])
+                            oleaje_pred = st.selectbox("Oleaje", [0, 1, 2, 3], format_func=lambda x: {0: 'Sin oleaje', 1: 'Leve', 2: 'Moderado', 3: 'Fuerte'}[x])
+                            musgo_pred = st.selectbox("Musgo", [0, 1, 2, 3], format_func=lambda x: {0: 'Sin musgo', 1: 'Verde', 2: 'Pardo', 3: 'Ambos'}[x])
+                            cielo_pred = st.selectbox("Cielo", [0, 1, 2], format_func=lambda x: {0: 'Soleado', 1: 'Parcial', 2: 'Nublado'}[x])
+                        
+                        if st.button("🔮 Predecir Concentración de Fósforo"):
+                            # Preparar datos para predicción
+                            comuna_encoded = le_comuna.transform([comuna_pred])[0]
+                            input_data = np.array([[comuna_encoded, temp_amb, ph_val, orp_val, o2_sat, o2_ppm,
+                                                  cond, cond_abs, tds, turb, temp_agua, presion, 
+                                                  viento_pred, oleaje_pred, musgo_pred, cielo_pred]])
+                            
+                            prediction = phos_model.predict(input_data)[0]
+                            
+                            st.success(f"🧪 **Concentración de Fósforo Predicha: {prediction:.6f} mg/L**")
+                            
+                            if prediction > 0.02:
+                                st.error("⚠️ Concentración alta de fósforo detectada - Riesgo de eutrofización")
+                            elif prediction > 0.01:
+                                st.warning("🔶 Concentración moderada de fósforo - Monitoreo recomendado")
+                            elif prediction < 0:
+                                st.info("ℹ️ Concentración muy baja o no detectable")
+                            else:
+                                st.success("✅ Concentración normal de fósforo")
                 
                 # MODELO DE ALGAS
                 with tab2:
                     st.subheader("🌱 Predicción de Presencia de Algas")
-                    # [Todo el código original del modelo de algas]
+                    
+                    # Entrenar modelo de algas
+                    @st.cache_resource
+                    def train_algae_model():
+                        try:
+                            feature_cols = ['Comuna_encoded', 'Temp. Amb (°C)', 'pH', 'ORP (mV)', 'O2 Sat (%)', 
+                                          'O2 (ppm)', 'Cond (µS/cm)', 'Cond Abs (µS/cm)', 'TDS (ppm)', 
+                                          'Turb (FNU)', 'Temp Agua (°C)', 'Presión (PSI)', 'Viento', 'Oleaje', 
+                                          'Musgo', 'Cielo']
+                            
+                            X = model_df[feature_cols]
+                            y = model_df['Algas_presente']
+                            
+                            # Verificar que no hay valores nulos ni infinitos
+                            if X.isnull().any().any() or y.isnull().any():
+                                raise ValueError("Hay valores nulos en los datos de entrenamiento")
+                            
+                            if not np.isfinite(X.values).all():
+                                raise ValueError("Hay valores infinitos en los datos de entrenamiento")
+                            
+                            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+                            
+                            # Random Forest Classifier
+                            rf_model = RandomForestClassifier(n_estimators=100, random_state=42)
+                            rf_model.fit(X_train, y_train)
+                            
+                            y_pred = rf_model.predict(X_test)
+                            accuracy = accuracy_score(y_test, y_pred)
+                            
+                            return rf_model, accuracy, feature_cols
+                        
+                        except Exception as e:
+                            st.error(f"Error entrenando modelo de algas: {e}")
+                            return None, None, None
+                    
+                    algae_model, algae_accuracy, algae_features = train_algae_model()
+                    
+                    if algae_model is None:
+                        st.error("❌ No se pudo entrenar el modelo de algas.")
+                    else:
+                        # Mostrar métricas del modelo
+                        st.metric("Precisión del Modelo", f"{algae_accuracy:.3f}")
+                        
+                        # Correlaciones estadísticas mejoradas
+                        st.subheader("📊 Análisis de Correlaciones con Presencia de Algas")
+                        correlations_algae = model_df[['Algas_presente', 'Temp. Amb (°C)', 'pH', 'O2 Sat (%)', 
+                                                     'Turb (FNU)', 'Fósforo reactivo total (mg/L)', 'Temp Agua (°C)']].corr()['Algas_presente'].sort_values(key=abs, ascending=False)
+                        
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.write("**Factores que Favorecen Algas:**")
+                            positive_corr = correlations_algae[correlations_algae > 0.1]
+                            for var, corr in positive_corr.items():
+                                if var != 'Algas_presente':
+                                    percentage = abs(corr) * 100
+                                    st.success(f"📈 {var}: +{percentage:.1f}%")
+                        
+                        with col2:
+                            st.write("**Factores que Inhiben Algas:**")
+                            negative_corr = correlations_algae[correlations_algae < -0.1]
+                            for var, corr in negative_corr.items():
+                                if var != 'Algas_presente':
+                                    percentage = abs(corr) * 100
+                                    st.info(f"📉 {var}: -{percentage:.1f}%")
+                        
+                        # Predictor interactivo
+                        st.subheader("🔮 Hacer Predicción")
+                        
+                        col1, col2, col3 = st.columns(3)
+                        
+                        with col1:
+                            st.write("**Variables Físicas**")
+                            temp_amb_a = st.slider("Temperatura Ambiente (°C)", 10.0, 30.0, 20.0, key="temp_amb_algae")
+                            temp_agua_a = st.slider("Temperatura Agua (°C)", 10.0, 30.0, 20.0, key="temp_agua_algae")
+                            presion_a = st.slider("Presión (PSI)", 13.0, 15.0, 14.3, key="presion_algae")
+                        
+                        with col2:
+                            st.write("**Variables Químicas**")
+                            ph_val_a = st.slider("pH", 6.0, 9.0, 7.5, key="ph_algae")
+                            orp_val_a = st.slider("ORP (mV)", 150, 300, 220, key="orp_algae")
+                            o2_sat_a = st.slider("O2 Saturación (%)", 70, 120, 95, key="o2_sat_algae")
+                            o2_ppm_a = st.slider("O2 (ppm)", 6.0, 12.0, 8.5, key="o2_ppm_algae")
+                            cond_a = st.slider("Conductividad (µS/cm)", 40, 80, 60, key="cond_algae")
+                            cond_abs_a = st.slider("Conductividad Abs (µS/cm)", 40, 80, 55, key="cond_abs_algae")
+                            tds_a = st.slider("TDS (ppm)", 20, 50, 30, key="tds_algae")
+                            turb_a = st.slider("Turbidez (FNU)", 0.0, 5.0, 0.5, key="turb_algae")
+                        
+                        with col3:
+                            st.write("**Variables Observacionales**")
+                            comuna_pred_a = st.selectbox("Comuna", ["Pucón", "Villarrica"], key="comuna_algae")
+                            viento_pred_a = st.selectbox("Viento", [0, 1, 2, 3], format_func=lambda x: {0: 'Sin viento', 1: 'Leve', 2: 'Moderado', 3: 'Fuerte'}[x], key="viento_algae")
+                            oleaje_pred_a = st.selectbox("Oleaje", [0, 1, 2, 3], format_func=lambda x: {0: 'Sin oleaje', 1: 'Leve', 2: 'Moderado', 3: 'Fuerte'}[x], key="oleaje_algae")
+                            musgo_pred_a = st.selectbox("Musgo", [0, 1, 2, 3], format_func=lambda x: {0: 'Sin musgo', 1: 'Verde', 2: 'Pardo', 3: 'Ambos'}[x], key="musgo_algae")
+                            cielo_pred_a = st.selectbox("Cielo", [0, 1, 2], format_func=lambda x: {0: 'Soleado', 1: 'Parcial', 2: 'Nublado'}[x], key="cielo_algae")
+                        
+                        if st.button("🔮 Predecir Presencia de Algas"):
+                            # Preparar datos para predicción
+                            comuna_encoded_a = le_comuna.transform([comuna_pred_a])[0]
+                            input_data_a = np.array([[comuna_encoded_a, temp_amb_a, ph_val_a, orp_val_a, o2_sat_a, o2_ppm_a,
+                                                    cond_a, cond_abs_a, tds_a, turb_a, temp_agua_a, presion_a, 
+                                                    viento_pred_a, oleaje_pred_a, musgo_pred_a, cielo_pred_a]])
+                            
+                            prediction_algae = algae_model.predict(input_data_a)[0]
+                            probability = algae_model.predict_proba(input_data_a)[0]
+                            
+                            if prediction_algae == 1:
+                                st.error(f"🌱 **PRESENCIA DE ALGAS DETECTADA** (Probabilidad: {probability[1]:.2%})")
+                                st.warning("⚠️ Se recomienda monitoreo adicional del cuerpo de agua")
+                                
+                                # Recomendaciones específicas
+                                if temp_agua_a > 22:
+                                    st.info("🌡️ Temperatura del agua elevada favorece el crecimiento de algas")
+                                if ph_val_a > 8:
+                                    st.info("🧪 pH alcalino puede promover proliferación algal")
+                                    
+                            else:
+                                st.success(f"✅ **NO SE DETECTA PRESENCIA DE ALGAS** (Probabilidad: {probability[0]:.2%})")
+                                st.info("ℹ️ Condiciones del agua aparentemente normales")
 
 else:
     st.error("❌ No se pudo cargar el archivo CSV.")
