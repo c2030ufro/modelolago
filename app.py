@@ -426,8 +426,110 @@ if df is not None:
                 else:
                     size_by = "Ninguno"
             
-            # [El resto del código de análisis temporal permanece igual...]
-            # [Incluir toda la lógica de visualización temporal aquí]
+            # --- INICIO DEL CÓDIGO FALTANTE ---
+
+            # Preparar dataframe para graficar
+            df_plot = df_temporal.copy()
+
+            # Aplicar filtro si se seleccionó uno
+            valor_filtro = None
+            if filter_by != "Ninguno":
+                opciones_filtro = ["Todas"] + df_plot[filter_by].unique().tolist()
+                valor_filtro = st.selectbox(f"Selecciona un valor para {filter_by}:", opciones_filtro)
+                if valor_filtro != "Todas":
+                    df_plot = df_plot[df_plot[filter_by] == valor_filtro]
+
+            # Manejar las opciones de color y tamaño
+            color_arg = color_by if color_by != "Ninguno" else None
+            size_arg = size_by if size_by != "Ninguno" else None
+
+            # Título dinámico para el gráfico
+            title = f"{chart_type} de {variable_y}"
+            if time_grouping != "Sin agrupar":
+                title += f" por {time_grouping.lower()}"
+            if valor_filtro and valor_filtro != "Todas":
+                title += f" (Filtro: {filter_by} = {valor_filtro})"
+
+            # Variable para almacenar la figura de Plotly
+            fig = None
+
+            # Lógica de agrupación temporal
+            if time_grouping != "Sin agrupar" and time_grouping != "Por lugar" and time_grouping != "Por comuna":
+                group_map = {
+                    "Por día": 'Fecha',
+                    "Por semana": 'Semana',
+                    "Por mes": 'Mes'
+                }
+                group_col = group_map.get(time_grouping)
+                
+                # Agrupar y calcular la media
+                if group_col in df_plot.columns:
+                    df_plot = df_plot.groupby(group_col)[variable_y].mean().reset_index()
+                
+                # Para el gráfico de línea, es importante ordenar las fechas o meses
+                if time_grouping == 'Por día':
+                    df_plot = df_plot.sort_values(by='Fecha')
+                elif time_grouping == 'Por mes':
+                    # Ordenar meses cronológicamente
+                    month_order = ['January', 'February', 'March', 'April', 'May', 'June', 
+                                   'July', 'August', 'September', 'October', 'November', 'December']
+                    df_plot['Mes'] = pd.Categorical(df_plot['Mes'], categories=month_order, ordered=True)
+                    df_plot = df_plot.sort_values('Mes')
+
+
+            # Generar el gráfico según el tipo seleccionado
+            try:
+                if chart_type == "Línea Temporal":
+                    x_axis = 'Fecha' if time_grouping == "Sin agrupar" else group_map.get(time_grouping, 'Fecha')
+                    fig = px.line(df_plot, x=x_axis, y=variable_y, color=color_arg,
+                                  title=title, markers=True)
+                
+                elif chart_type == "Dispersión Temporal":
+                    fig = px.scatter(df_plot, x='Fecha', y=variable_y, color=color_arg, size=size_arg,
+                                     title=title, hover_data=['Lugar Muestreo'] if 'Lugar Muestreo' in df_plot else None)
+                
+                elif chart_type == "Box Plot Temporal":
+                    group_map_box = {
+                        "Por día": df_plot['Fecha'].dt.to_period('D').astype(str),
+                        "Por semana": df_plot['Semana'],
+                        "Por mes": df_plot['Mes'],
+                        "Por lugar": df_plot['Lugar Muestreo'],
+                        "Por comuna": df_plot['Comuna']
+                    }
+                    x_axis = group_map_box.get(time_grouping, df_plot['Fecha'].dt.to_period('M').astype(str))
+                    fig = px.box(df_plot, x=x_axis, y=variable_y, color=color_arg,
+                                 title=title)
+                    fig.update_xaxes(title_text=time_grouping)
+
+                elif chart_type == "Histograma por Período":
+                    fig = px.histogram(df_plot, x=variable_y, color=color_arg,
+                                       title=title, marginal="box")
+                
+                elif chart_type == "Tendencia con Regresión":
+                    # Se necesita convertir fecha a un valor numérico para la regresión
+                    df_plot['Fecha_ordinal'] = df_plot['Fecha'].apply(lambda x: x.toordinal())
+                    fig = px.scatter(df_plot, x='Fecha_ordinal', y=variable_y, trendline="ols",
+                                     color=color_arg, title=title)
+                    # Reemplazar etiquetas numéricas con fechas reales para mejor lectura
+                    fig.update_xaxes(
+                        title_text="Fecha",
+                        tickvals=df_plot['Fecha_ordinal'],
+                        ticktext=[d.strftime('%Y-%m-%d') for d in df_plot['Fecha']]
+                    )
+
+                # Mostrar el gráfico si se creó correctamente
+                if fig:
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.warning("No se pudo generar el gráfico con las opciones seleccionadas.")
+
+            except Exception as e:
+                st.error(f"Error al generar el gráfico: {e}")
+                st.warning("Intenta con otra combinación de variables o agrupaciones.")
+
+            # --- FIN DEL CÓDIGO FALTANTE ---
+
+            
     
     # SECCIÓN 3: INSIGHTS AVANZADOS (modificada para nitrógeno)
     elif seccion == "🔍 Insights Avanzados":
