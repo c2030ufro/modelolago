@@ -106,6 +106,9 @@ def load_and_preprocess_data(dataset_type="completo"):
         # Procesar fechas si existe la columna Día
         if 'Día' in df.columns:
             try:
+                # Mostrar información inicial para debugging
+                st.info(f"🔄 Procesando fechas... Formato original: {df['Día'].head(3).tolist()}")
+                
                 # Intentar diferentes formatos de fecha más específicos
                 df['Fecha'] = pd.to_datetime(df['Día'], errors='coerce', dayfirst=True, format=None)
                 
@@ -128,10 +131,14 @@ def load_and_preprocess_data(dataset_type="completo"):
                     df.loc[df['Fecha'].notna(), 'Mes'] = df_with_dates['Fecha'].dt.month_name()
                     df.loc[df['Fecha'].notna(), 'Día_Mes'] = df_with_dates['Fecha'].dt.day
                     df.loc[df['Fecha'].notna(), 'Semana'] = df_with_dates['Fecha'].dt.isocalendar().week
+                    
+                    st.success(f"✅ Fechas procesadas exitosamente: {valid_dates}/{len(df)} válidas")
                 else:
+                    st.warning("⚠️ No se pudieron procesar fechas válidas - revisar formato de datos")
                     df['Fecha'] = pd.NaT
                     
             except Exception as e:
+                st.error(f"❌ Error procesando fechas: {e}")
                 df['Fecha'] = pd.NaT
         
         # Limpiar nombres de lugares y comunas (solo para mostrar, no para análisis en nitrógeno)
